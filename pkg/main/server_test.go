@@ -108,7 +108,7 @@ func TestCerts(t *testing.T) {
 			// Similarly to the previous case, but now the Client has the full certificate chain along with the Root
 			// It's a match!
 			// !!!!
-			name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect but doesn't",
+			name: "Server[Leaf signed by Intermediate] Client[Intermediary Full Chain] => should connect",
 			args: args{
 				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
 				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
