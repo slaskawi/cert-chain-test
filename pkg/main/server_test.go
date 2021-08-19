@@ -52,11 +52,11 @@ func TestCerts(t *testing.T) {
 			},
 		},
 		{
-			// This one is strange to me.
-			// The Server uses cert signed by CA.
-			// The Client uses a trust bundle with CA only.
-			// It fails with:
-			// Get "https://local.localhost:8443": x509: certificate signed by unknown authority (possibly because of "x509: invalid signature: parent certificate cannot sign this kind of certificate" while trying to verify candidate authority certificate "*.localhost")
+			// The Server uses intermediary and the Client uses CA only.
+			// Note how we configure OpenSSL:
+			// basicConstraints = critical, CA:true, pathlen:0
+			// keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+			// The CA flag needs to be false and we need to use proper key Usages.
 			name: "Server[Intermediary] Client[CA] => should connect",
 			args: args{
 				ServerKey:         "certs/generated/Intermediary.key",
