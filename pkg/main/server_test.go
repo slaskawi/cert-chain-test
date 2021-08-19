@@ -3,14 +3,16 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os/exec"
 	"testing"
 )
 
 func TestCerts(t *testing.T) {
+	createCerts()
+
 	type args struct {
 		ServerKey         string
 		ServerCert        string
@@ -56,12 +58,61 @@ func TestCerts(t *testing.T) {
 			// Note how we configure OpenSSL:
 			// basicConstraints = critical, CA:true, pathlen:0
 			// keyUsage = critical, digitalSignature, cRLSign, keyCertSign
-			// The CA flag needs to be false and we need to use proper key Usages.
+			// The CA flag needs to be false, and we need to use proper key Usages.
+			// The assumption is that an intermediary key might be used for further signing...
 			name: "Server[Intermediary] Client[CA] => should connect",
 			args: args{
 				ServerKey:         "certs/generated/Intermediary.key",
 				ServerCert:        "certs/generated/Intermediary.crt",
 				ClientTrustBundle: "certs/generated/Trustbundle_CA.crt",
+				shouldConnect:     true,
+			},
+		},
+		{
+			// This should pass as we have the CA Trustbundle at hand
+			name: "Server[Leaf signed by CA] Client[CA] => should connect",
+			args: args{
+				ServerKey:         "certs/generated/Leaf_signed_by_CA.key",
+				ServerCert:        "certs/generated/Leaf_signed_by_CA.crt",
+				ClientTrustBundle: "certs/generated/Trustbundle_CA.crt",
+				shouldConnect:     true,
+			},
+		},
+		{
+			// This should pass as the intermediate is also signed by CA.
+			name: "Server[Leaf signed by Intermediate] Client[CA] => should connect",
+			args: args{
+				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
+				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
+				ClientTrustBundle: "certs/generated/Trustbundle_CA.crt",
+				shouldConnect:     true,
+			},
+		},
+		{
+			// !!!!
+			// This is the first interesting case.
+			// The Client doesn't have the full certificate chain but only the intermediate match.
+			// In theory, this should be a match but unfortunately it fails...
+			// !!!!
+			name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect but doesn't",
+			args: args{
+				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
+				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
+				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
+				shouldConnect:     false,
+			},
+		},
+		{
+			// !!!!
+			// This is the second interesting case.
+			// Similarly to the previous case, but now the Client has the full certificate chain along with the Root
+			// It's a match!
+			// !!!!
+			name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect but doesn't",
+			args: args{
+				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
+				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
+				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain.crt",
 				shouldConnect:     true,
 			},
 		},
@@ -100,7 +151,7 @@ func TestCerts(t *testing.T) {
 			}
 			resp, err := client.Do(req)
 			hasConnected := err == nil
-			fmt.Printf("Just informative - err: %v\n", err)
+			//fmt.Printf("Just informative - err: %v\n", err)
 			if tt.args.shouldConnect != hasConnected {
 				t.Fatalf("Expected shouldConnect=%v but found err=%v", tt.args.shouldConnect, err)
 			}
@@ -108,7 +159,19 @@ func TestCerts(t *testing.T) {
 				resp.Body.Close()
 			}
 			StopServer()
-
 		})
 	}
+}
+
+func createCerts() {
+	cmd := exec.Command("./certs/create_certs.sh")
+
+	err := cmd.Run()
+
+	if err != nil {
+		panic(err)
+	}
+
+	out, _ := cmd.Output()
+	println(string(out))
 }

@@ -1,4 +1,4 @@
-#Generate CA Certificate
+#!/bin/bash
 
 create_ca() {
   echo "==== Generating CA ===="
