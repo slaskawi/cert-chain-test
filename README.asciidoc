@@ -35,19 +35,19 @@ The most interesting test case is the one mentioned below:
 
 ```
 {
-			// !!!!
-			// This is the first interesting case.
-			// The Client doesn't have the full certificate chain but only the intermediate match.
-			// In theory, this should be a match but unfortunately it fails...
-			// !!!!
-			name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect but doesn't",
-			args: args{
-				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
-				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
-				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
-				shouldConnect:     false,
-			},
-		},
+    // !!!!
+    // This is the first interesting case.
+    // The Client doesn't have the full certificate chain but only the intermediate match.
+    // In theory, this should be a match but unfortunately it fails...
+    // !!!!
+    name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect but doesn't",
+    args: args{
+        ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
+        ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
+        ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
+        shouldConnect:     false,
+    },
+},
 ```
 
 It seems Golang TLS stack needs the full Certificate chain to check whether it can trust the server. This scenario is a bit
