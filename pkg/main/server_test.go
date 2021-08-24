@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os/exec"
 	"testing"
@@ -79,36 +78,47 @@ func TestCerts(t *testing.T) {
 			},
 		},
 		{
-			// This should pass as the intermediate is also signed by CA.
-			name: "Server[Leaf signed by Intermediate] Client[CA] => should connect",
+			// This is a bit counterintuitive. The Leaf certificate is signed by the Intermediary, which
+			// is signed by CA. The Client has only CA in his hands, therefore it doesn't know anything about
+			// the intermediary. The only way to verify this scenario is to put both Intermediary.crt and CA.crt
+			// into the Trust Bundle (see the testcase below).
+			// Bonus point: You can verify this using openssl:
+			//   openssl verify -CAfile ./generated/Trustbundle_CA.crt ./generated/Leaf_signed_by_Intermediary.crt
+			//   CN = delta
+			//   error 20 at 0 depth lookup: unable to get local issuer certificate
+			//   error ./generated/Leaf_signed_by_Intermediary.crt: verification failed
+			name: "Server[Leaf signed by Intermediate] Client[CA] => shouldn't connect",
 			args: args{
 				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
 				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
 				ClientTrustBundle: "certs/generated/Trustbundle_CA.crt",
-				shouldConnect:     true,
-			},
-		},
-		{
-			// !!!!
-			// This is the first interesting case.
-			// The Client doesn't have the full certificate chain but only the intermediate match.
-			// In theory, this should be a match but unfortunately it fails...
-			// !!!!
-			name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect but doesn't",
-			args: args{
-				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
-				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
-				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
 				shouldConnect:     false,
 			},
 		},
 		{
-			// !!!!
-			// This is the second interesting case.
-			// Similarly to the previous case, but now the Client has the full certificate chain along with the Root
-			// It's a match!
-			// !!!!
-			name: "Server[Leaf signed by Intermediate] Client[Intermediary Full Chain] => should connect",
+			// Have a look at the description of the above test case.
+			name: "Server[Leaf signed by Intermediate] Client[CA + Intermediary] => shouldn't connect",
+			args: args{
+				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
+				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
+				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain.crt",
+				shouldConnect:     true,
+			},
+		},
+		{
+			// This is the most interesting case. We use the Intermediary cert without the root. Since the
+			// intermediary is CA, this should be fine.
+			name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect",
+			args: args{
+				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
+				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
+				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
+				shouldConnect:     true,
+			},
+		},
+		{
+			// A similar test to the one the above but with full certificate chain.
+			name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect",
 			args: args{
 				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
 				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
@@ -121,35 +131,24 @@ func TestCerts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			StartSever(tt.args.ServerKey, tt.args.ServerCert)
 
-			// Stolen from https://forfuncsake.github.io/post/2017/08/trust-extra-ca-cert-in-go-app/
-			rootCAs, _ := x509.SystemCertPool()
-			if rootCAs == nil {
-				rootCAs = x509.NewCertPool()
-			}
-
 			// Read in the cert file
 			certs, err := ioutil.ReadFile(tt.args.ClientTrustBundle)
 			if err != nil {
 				panic(err)
 			}
 
-			// Append our cert to the system pool
-			if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
-				log.Println("No certs appended, using system certs only")
+			trustedCertPool := x509.NewCertPool()
+			if ok := trustedCertPool.AppendCertsFromPEM(certs); !ok {
+				panic("Failed to append certs from file")
+			}
+			
+			config := &tls.Config{
+				RootCAs: trustedCertPool,
 			}
 
-			// Trust the augmented cert pool in our client
-			config := &tls.Config{
-				RootCAs:            rootCAs,
-			}
 			tr := &http.Transport{TLSClientConfig: config}
 			client := &http.Client{Transport: tr}
-
-			req, err := http.NewRequest(http.MethodGet, "https://local.localhost:8443", nil)
-			if err != nil {
-				panic(err)
-			}
-			resp, err := client.Do(req)
+			resp, err := client.Get(GetServerAddress())
 			hasConnected := err == nil
 			//fmt.Printf("Just informative - err: %v\n", err)
 			if tt.args.shouldConnect != hasConnected {
@@ -164,8 +163,8 @@ func TestCerts(t *testing.T) {
 }
 
 func createCerts() {
-	cmd := exec.Command("./certs/create_certs.sh")
-
+	cmd := exec.Command("./create_certs.sh")
+	cmd.Dir = "./certs"
 	err := cmd.Run()
 
 	if err != nil {

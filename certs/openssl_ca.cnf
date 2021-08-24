@@ -21,8 +21,14 @@ commonName_max = 64
 # Extensions to add to a certificate request
 subjectKeyIdentifier = hash
 basicConstraints = critical, CA:true
-keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+keyUsage = critical, digitalSignature, keyCertSign, keyEncipherment
+authorityKeyIdentifier = keyid,issuer
 subjectAltName = @alt_names
 
 [alt_names]
+IP.1 = 127.0.0.1
+IP.2 = ::
+IP.3 = ::1
 DNS.1 = *.localhost
+
+
