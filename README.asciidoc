@@ -2,32 +2,8 @@
 
 This repo contains a test for verifying Server key/certificates pairs along with corresponding CA Bundles.
 
-The test has been created in the response to the https://bugzilla.redhat.com/show_bug.cgi?id=1985304[OpenShift Bug 1985304].
-
-One of our customers generates a serving key/certificate pair using Cert Manager for the OpenShift router. This unfortunately breaks the
-Cluster Authentication Operator, which reports that it doesn't trust the router. The root issue is very likely
-to be caused by https://github.com/jetstack/cert-manager/pull/3433[Cert Manager Vault enhancement], that excludes
-the root CA from the Full Certificate chain inserted into `tls.crt` key. For the purpose of this test, I'm calling
-such scenarios "Rootless" certificate chains. The Cert Manager inserts a Full Certificate Chain (that includes root) into
-`ca.crt`. Unfortunately, `ca.crt` is not picked up by any OpenShift machinery.
-
-More information about Cert Manager and Secret handling might be found https://github.com/jetstack/cert-manager/issues/4192[here].
-
-=== Certificates and Trust Bundles used in this test
-
-The testing harness implemented in this repo generates the following certificates:
-
-- `CA.{key,crt}` - Root certificate
-- `Intermediary.{key,crt}` - Intermediary certificate signed by CA
-- `Leaf_signed_by_CA.{key,crt}` - Leaf certificate signed by CA
-- `Leaf_signed_by_Intermediary.{key,crt}` - Leaf certificate signed by the Intermediary certificate
-
-And the following Trust Bundles:
-
-- `Trustbundle_CA.crt` - CA for the root
-- `Trustbundle_Intermediary_Full_Chain{_Rootless}.crt` - CA for the Intermediary (with and without the root)
-- `Trustbundle_Leaf_signed_by_CA_Full_Chain{_Rootless}.crt` - CA for the Leaf signed by CA (with and without the root)
-- `Trustbundle_Leaf_signed_by_Intermediary_Full_Chain{_Rootless}.crt` - CA for the Leaf signed by the Intermediary (with and without the root)
+The test outlines different behavior between the TLS stack from Golang and OpenSSL. The difference is important when considering
+Rootless Certificate Chains.
 
 === Interesting test results
 
@@ -35,34 +11,42 @@ The most interesting test case is the one mentioned below:
 
 ```
 {
-    // !!!!
-    // This is the first interesting case.
-    // The Client doesn't have the full certificate chain but only the intermediate match.
-    // In theory, this should be a match but unfortunately it fails...
-    // !!!!
-    name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect but doesn't",
+    // This is a bit counterintuitive. The Leaf certificate is signed by the Intermediary, which
+    // is signed by CA. The Client has only CA in his hands, therefore it doesn't know anything about
+    // the intermediary. The only way to verify this scenario is to put both Intermediary.crt and CA.crt
+    // into the Trust Bundle (see the testcase below).
+    // Bonus point: You can verify this using openssl:
+    //   openssl verify -CAfile ./generated/Trustbundle_CA.crt ./generated/Leaf_signed_by_Intermediary.crt
+    //   CN = delta
+    //   error 20 at 0 depth lookup: unable to get local issuer certificate
+    //   error ./generated/Leaf_signed_by_Intermediary.crt: verification failed
+    name: "Server[Leaf signed by Intermediate] Client[CA] => shouldn't connect",
     args: args{
-        ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
-        ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
-        ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
-        shouldConnect:     false,
+        ServerKey:          "certs/generated/Leaf_signed_by_Intermediary.key",
+        ServerCert:         "certs/generated/Leaf_signed_by_Intermediary.crt",
+        ClientTrustBundle:  "certs/generated/Trustbundle_CA.crt",
+        shouldConnect:      false,
+        isValidWithOpenSSL: false,
     },
 },
 ```
 
-It seems Golang TLS stack needs the full Certificate chain to check whether it can trust the server. This scenario is a bit
-unintuitive, as OpenSSL command verification works fine:
-
 ```
-$ openssl verify -CAfile Trustbundle_Leaf_signed_by_Intermediary_Full_Chain_Rootless.crt Leaf_signed_by_Intermediary.crt
-Leaf_signed_by_Intermediary.crt: OK
+{
+    // This is the most interesting case. We use the Intermediary cert without the root.
+    // Since the intermediary is CA, this is fine for Golang TLS stack.
+    // However, this fails with OpenSSL:
+    // CN = bravo
+    // error 2 at 1 depth lookup: unable to get issuer certificate
+    // error certs/generated/Leaf_signed_by_Intermediary.crt: verification failed
+    // OpenSSL requires a Full Certificate Chain by default.
+    name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect",
+    args: args{
+        ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
+        ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
+        ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
+        shouldConnect:     true,
+        isValidWithOpenSSL: false,
+    },
+},
 ```
-
-=== Conclusions
-
-The current Cert Manager implementation for Rootless CAs doesn't play nice with Go TLS stack. It requires using `ca.crt` in
-our application, which is something a bit unintuitive. I believe the Cert Manager should always put Root certificate into the
-Trust Bundle as it's better to transmit too much than too little.
-
-Please have in mind that this applies only to Issuers with self-signed certs. In this case, it is very unlikely that Root CA
-will be put into the container. For ACME for example, omitting Root CA is absolutely fine.

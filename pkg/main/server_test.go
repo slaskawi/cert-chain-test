@@ -13,10 +13,11 @@ func TestCerts(t *testing.T) {
 	createCerts()
 
 	type args struct {
-		ServerKey         string
-		ServerCert        string
-		ClientTrustBundle string
-		shouldConnect     bool
+		ServerKey          string
+		ServerCert         string
+		ClientTrustBundle  string
+		shouldConnect      bool
+		isValidWithOpenSSL bool
 	}
 	tests := []struct {
 		name string
@@ -26,55 +27,63 @@ func TestCerts(t *testing.T) {
 			// Server and Client match perfectly - no surprise they can connect.
 			name: "Server[CA] Client[CA] => should connect",
 			args: args{
-				ServerKey:         "certs/generated/CA.key",
-				ServerCert:        "certs/generated/CA.crt",
-				ClientTrustBundle: "certs/generated/Trustbundle_CA.crt",
-				shouldConnect:     true,
+				ServerKey:          "certs/generated/CA.key",
+				ServerCert:         "certs/generated/CA.crt",
+				ClientTrustBundle:  "certs/generated/Trustbundle_CA.crt",
+				shouldConnect:      true,
+				isValidWithOpenSSL: true,
 			},
 		},
 		{
 			// The Client has a full chain with the Root. So again - perfect match.
 			name: "Server[Intermediary] Client[Intermediary + CA] => should connect",
 			args: args{
-				ServerKey:         "certs/generated/Intermediary.key",
-				ServerCert:        "certs/generated/Intermediary.crt",
-				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain.crt",
-				shouldConnect:     true,
+				ServerKey:          "certs/generated/Intermediary.key",
+				ServerCert:         "certs/generated/Intermediary.crt",
+				ClientTrustBundle:  "certs/generated/Trustbundle_Intermediary_Full_Chain.crt",
+				shouldConnect:      true,
+				isValidWithOpenSSL: true,
 			},
 		},
 		{
-			// The Client has a matching Cert but don't have CA. This passes in Go.
+			// The Client has a matching Cert but don't have CA. This passes in Golang but fails with OpenSSL:
+			// CN = bravo
+			//error 20 at 0 depth lookup: unable to get local issuer certificate
+			//error certs/generated/Intermediary.crt: verification failed
 			name: "Server[Intermediary] Client[Intermediary Rootless] => should connect",
 			args: args{
-				ServerKey:         "certs/generated/Intermediary.key",
-				ServerCert:        "certs/generated/Intermediary.crt",
-				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
-				shouldConnect:     true,
+				ServerKey:          "certs/generated/Intermediary.key",
+				ServerCert:         "certs/generated/Intermediary.crt",
+				ClientTrustBundle:  "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
+				shouldConnect:      true,
+				isValidWithOpenSSL: false,
 			},
 		},
 		{
 			// The Server uses intermediary and the Client uses CA only.
 			// Note how we configure OpenSSL:
-			// basicConstraints = critical, CA:true, pathlen:0
+			// basicConstraints = critical, CA:true
 			// keyUsage = critical, digitalSignature, cRLSign, keyCertSign
 			// The CA flag needs to be false, and we need to use proper key Usages.
 			// The assumption is that an intermediary key might be used for further signing...
 			name: "Server[Intermediary] Client[CA] => should connect",
 			args: args{
-				ServerKey:         "certs/generated/Intermediary.key",
-				ServerCert:        "certs/generated/Intermediary.crt",
-				ClientTrustBundle: "certs/generated/Trustbundle_CA.crt",
-				shouldConnect:     true,
+				ServerKey:          "certs/generated/Intermediary.key",
+				ServerCert:         "certs/generated/Intermediary.crt",
+				ClientTrustBundle:  "certs/generated/Trustbundle_CA.crt",
+				shouldConnect:      true,
+				isValidWithOpenSSL: true,
 			},
 		},
 		{
 			// This should pass as we have the CA Trustbundle at hand
 			name: "Server[Leaf signed by CA] Client[CA] => should connect",
 			args: args{
-				ServerKey:         "certs/generated/Leaf_signed_by_CA.key",
-				ServerCert:        "certs/generated/Leaf_signed_by_CA.crt",
-				ClientTrustBundle: "certs/generated/Trustbundle_CA.crt",
-				shouldConnect:     true,
+				ServerKey:          "certs/generated/Leaf_signed_by_CA.key",
+				ServerCert:         "certs/generated/Leaf_signed_by_CA.crt",
+				ClientTrustBundle:  "certs/generated/Trustbundle_CA.crt",
+				shouldConnect:      true,
+				isValidWithOpenSSL: true,
 			},
 		},
 		{
@@ -89,10 +98,11 @@ func TestCerts(t *testing.T) {
 			//   error ./generated/Leaf_signed_by_Intermediary.crt: verification failed
 			name: "Server[Leaf signed by Intermediate] Client[CA] => shouldn't connect",
 			args: args{
-				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
-				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
-				ClientTrustBundle: "certs/generated/Trustbundle_CA.crt",
-				shouldConnect:     false,
+				ServerKey:          "certs/generated/Leaf_signed_by_Intermediary.key",
+				ServerCert:         "certs/generated/Leaf_signed_by_Intermediary.crt",
+				ClientTrustBundle:  "certs/generated/Trustbundle_CA.crt",
+				shouldConnect:      false,
+				isValidWithOpenSSL: false,
 			},
 		},
 		{
@@ -103,17 +113,24 @@ func TestCerts(t *testing.T) {
 				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
 				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain.crt",
 				shouldConnect:     true,
+				isValidWithOpenSSL: true,
 			},
 		},
 		{
-			// This is the most interesting case. We use the Intermediary cert without the root. Since the
-			// intermediary is CA, this should be fine.
+			// This is the most interesting case. We use the Intermediary cert without the root.
+			// Since the intermediary is CA, this is fine for Golang TLS stack.
+			// However, this fails with OpenSSL:
+			// CN = bravo
+			// error 2 at 1 depth lookup: unable to get issuer certificate
+			// error certs/generated/Leaf_signed_by_Intermediary.crt: verification failed
+			// OpenSSL requires a Full Certificate Chain by default.
 			name: "Server[Leaf signed by Intermediate] Client[Intermediary Rootless] => should connect",
 			args: args{
 				ServerKey:         "certs/generated/Leaf_signed_by_Intermediary.key",
 				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
 				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain_Rootless.crt",
 				shouldConnect:     true,
+				isValidWithOpenSSL: false,
 			},
 		},
 		{
@@ -124,6 +141,7 @@ func TestCerts(t *testing.T) {
 				ServerCert:        "certs/generated/Leaf_signed_by_Intermediary.crt",
 				ClientTrustBundle: "certs/generated/Trustbundle_Intermediary_Full_Chain.crt",
 				shouldConnect:     true,
+				isValidWithOpenSSL: true,
 			},
 		},
 	}
@@ -141,7 +159,7 @@ func TestCerts(t *testing.T) {
 			if ok := trustedCertPool.AppendCertsFromPEM(certs); !ok {
 				panic("Failed to append certs from file")
 			}
-			
+
 			config := &tls.Config{
 				RootCAs: trustedCertPool,
 			}
@@ -158,6 +176,11 @@ func TestCerts(t *testing.T) {
 				resp.Body.Close()
 			}
 			StopServer()
+
+			isOpenSSLValid := IsValidWithOpenSSL(tt.args.ServerCert, tt.args.ClientTrustBundle)
+			if isOpenSSLValid != tt.args.isValidWithOpenSSL {
+				t.Fatalf("Expected isValidWithOpenSSL=%v but was %v", tt.args.isValidWithOpenSSL, isOpenSSLValid)
+			}
 		})
 	}
 }
