@@ -1,28 +1,5 @@
-[req]
-distinguished_name = req_distinguished_name
-req_extensions = v3_req
-
-[req_distinguished_name]
-countryName = ZA
-countryName_default = ZA
-stateOrProvinceName = Western Cape
-stateOrProvinceName_default = Western Cape
-localityName = Cape Town
-localityName_default = Cape Town
-organizationName = 22 Digital
-organizationName_default = 22 Digital
-organizationalUnitName = Development Team
-organizationalUnitName_default = Development Team
-commonName = localhost
-commonName_default = localhost
-commonName_max = 64
-
 [ v3_req ]
-# Extensions to add to a certificate request
-subjectKeyIdentifier = hash
-basicConstraints = critical, CA:true
-keyUsage = critical, digitalSignature, keyCertSign, keyEncipherment
-authorityKeyIdentifier = keyid,issuer
+basicConstraints = CA:true
 subjectAltName = @alt_names
 
 [alt_names]
